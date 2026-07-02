@@ -1334,24 +1334,38 @@ function modelBlock(g){
   </div>`;
 }
 function topEdgesBanner(){
-  const games=(state.data.games||[]).filter(g=>g.model&&g.model.edge&&g.model.edge.edge!=null&&Math.abs(g.model.edge.edge)>=0.03);
-  games.sort((a,b)=>Math.abs(b.model.edge.edge)-Math.abs(a.model.edge.edge));
-  const top=games.slice(0,3);
-  if(!top.length)return '';
-  const cards=top.map(g=>{
-    const e=g.model.edge,m=g.model,ev=Math.round(e.edge*100);
-    const pick=e.side==='home'?g.home.team:g.away.team;
-    const mp=Math.round((e.side==='home'?m.pHome:m.pAway)*100);
-    const ip=e.side==='home'?e.impHome:e.impAway;
-    const ipt=ip!=null?Math.round(ip*100)+'%':'—';
-    const tot=(e.ou!=null&&e.totalLean&&e.totalLean!=='—')?`<span class="te-chip">${e.totalLean} ${e.ou}</span>`:'';
+  const all=(state.data.games||[]).filter(g=>g.model&&g.model.pHome!=null);
+  const withEdge=all.filter(g=>g.model.edge&&g.model.edge.edge!=null&&Math.abs(g.model.edge.edge)>=0.03)
+    .sort((a,b)=>Math.abs(b.model.edge.edge)-Math.abs(a.model.edge.edge));
+  if(withEdge.length){
+    const cards=withEdge.slice(0,3).map(g=>{
+      const e=g.model.edge,m=g.model,ev=Math.round(e.edge*100);
+      const pick=e.side==='home'?g.home.team:g.away.team;
+      const mp=Math.round((e.side==='home'?m.pHome:m.pAway)*100);
+      const ip=e.side==='home'?e.impHome:e.impAway;
+      const ipt=ip!=null?Math.round(ip*100)+'%':'—';
+      const tot=(e.ou!=null&&e.totalLean&&e.totalLean!=='—')?`<span class="te-chip">${e.totalLean} ${e.ou}</span>`:'';
+      return `<div class="te-card">
+        <div class="te-match"><span>${esc(g.away.team)} @ ${esc(g.home.team)}</span><span>${esc(g.firstPitch)}</span></div>
+        <div class="te-pick">${esc(pick)} <span class="te-edge">+${ev}%</span></div>
+        <div class="te-meta">model ${mp}% &middot; mkt ${ipt} <span class="conf ${m.confLabel.toLowerCase()}">${m.confLabel}</span> ${tot}</div>
+      </div>`;
+    }).join('');
+    return `<div class="topedges"><div class="te-head">&#127919; Top Edges of the Day <span class="te-sub">biggest model-vs-market gaps &middot; not betting advice</span></div><div class="te-grid">${cards}</div></div>`;
+  }
+  // No market posted yet -> show the model's strongest leans so the day still loads
+  const leans=all.slice().sort((a,b)=>Math.abs(b.model.pHome-0.5)-Math.abs(a.model.pHome-0.5)).slice(0,3);
+  if(!leans.length)return '';
+  const cards=leans.map(g=>{
+    const m=g.model,homeFav=m.pHome>=0.5,pick=homeFav?g.home.team:g.away.team;
+    const pc=Math.round((homeFav?m.pHome:m.pAway)*100);
     return `<div class="te-card">
       <div class="te-match"><span>${esc(g.away.team)} @ ${esc(g.home.team)}</span><span>${esc(g.firstPitch)}</span></div>
-      <div class="te-pick">${esc(pick)} <span class="te-edge">+${ev}%</span></div>
-      <div class="te-meta">model ${mp}% &middot; mkt ${ipt} <span class="conf ${m.confLabel.toLowerCase()}">${m.confLabel}</span> ${tot}</div>
+      <div class="te-pick">${esc(pick)} <span class="te-edge">${pc}%</span></div>
+      <div class="te-meta">proj ${m.expAway}&ndash;${m.expHome} &middot; tot ${m.total} <span class="conf ${m.confLabel.toLowerCase()}">${m.confLabel}</span></div>
     </div>`;
   }).join('');
-  return `<div class="topedges"><div class="te-head">&#127919; Top Edges of the Day <span class="te-sub">biggest model-vs-market gaps &middot; not betting advice</span></div><div class="te-grid">${cards}</div></div>`;
+  return `<div class="topedges"><div class="te-head">&#127919; Top Model Leans <span class="te-sub">market not posted yet &middot; model projections, not betting advice</span></div><div class="te-grid">${cards}</div></div>`;
 }
 function renderCards(){
   const games=state.data.games;
@@ -1410,21 +1424,37 @@ function renderLeaders(){
   $('#content').innerHTML='<div class="lead-wrap">'+block('⚾ Hitting',L.hitting)+block('🔥 Pitching',L.pitching)+'</div>';
 }
 function renderEdges(){
-  const games=(state.data.games||[]).filter(g=>g.model&&g.model.edge&&g.model.edge.edge!=null)
+  const all=(state.data.games||[]).filter(g=>g.model&&g.model.pHome!=null);
+  const games=all.filter(g=>g.model.edge&&g.model.edge.edge!=null)
     .sort((a,b)=>Math.abs(b.model.edge.edge)-Math.abs(a.model.edge.edge));
-  if(!games.length){$('#content').innerHTML='<div class="center">No betting odds posted for this date yet &mdash; edges need a market line to compare against.</div>';return;}
-  const rows=games.map(g=>{const m=g.model,e=m.edge,ev=Math.round(e.edge*100),strong=Math.abs(e.edge)>=0.05;
-    return `<tr class="${strong?'val':''}"><td>${esc(g.firstPitch)}</td>
+  if(games.length){
+    const rows=games.map(g=>{const m=g.model,e=m.edge,ev=Math.round(e.edge*100),strong=Math.abs(e.edge)>=0.05;
+      return `<tr class="${strong?'val':''}"><td>${esc(g.firstPitch)}</td>
+        <td>${esc(g.away.team)} @ ${esc(g.home.team)}</td>
+        <td>${Math.round(m.pAway*100)}% / ${Math.round(m.pHome*100)}%</td>
+        <td>${e.impAway!=null?Math.round(e.impAway*100)+'% / '+Math.round(e.impHome*100)+'%':'&mdash;'}</td>
+        <td><b>${e.side==='home'?esc(g.home.team):esc(g.away.team)}</b> ${ev>=0?'+':''}${ev}%</td>
+        <td>${m.total}${e.ou!=null?' <span class="sub">(O/U '+e.ou+')</span>':''}</td>
+        <td>${e.ou!=null?(e.totalLean==='—'?'&mdash;':e.totalLean+' '+pct(m.pOver)):'&mdash;'}</td>
+        <td><span class="conf ${m.confLabel.toLowerCase()}">${m.confLabel}</span></td></tr>`;}).join('');
+    $('#content').innerHTML=`<div style="overflow-x:auto"><table class="tbl"><thead><tr>
+      <th>Time</th><th>Matchup</th><th>Model A/H</th><th>Market A/H</th><th>ML Edge</th><th>Proj Tot</th><th>Total Lean</th><th>Conf</th></tr></thead><tbody>${rows}</tbody></table></div>
+      <div class="disc" style="margin-top:12px">Edge = model win% &minus; market implied% (de-vigged when both moneylines are posted). A positive edge means the model rates that side higher than the betting market. First-principles estimate, not betting advice.</div>`;
+    return;
+  }
+  // No market posted yet -> show the model's own projections so the day still loads
+  const proj=all.slice().sort((a,b)=>Math.abs(b.model.pHome-0.5)-Math.abs(a.model.pHome-0.5));
+  if(!proj.length){$('#content').innerHTML='<div class="center">No games scheduled for this date.</div>';return;}
+  const rows=proj.map(g=>{const m=g.model,homeFav=m.pHome>=0.5,pick=homeFav?g.home.team:g.away.team,pc=Math.round((homeFav?m.pHome:m.pAway)*100);
+    return `<tr><td>${esc(g.firstPitch)}</td>
       <td>${esc(g.away.team)} @ ${esc(g.home.team)}</td>
       <td>${Math.round(m.pAway*100)}% / ${Math.round(m.pHome*100)}%</td>
-      <td>${e.impAway!=null?Math.round(e.impAway*100)+'% / '+Math.round(e.impHome*100)+'%':'&mdash;'}</td>
-      <td><b>${e.side==='home'?esc(g.home.team):esc(g.away.team)}</b> ${ev>=0?'+':''}${ev}%</td>
-      <td>${m.total}${e.ou!=null?' <span class="sub">(O/U '+e.ou+')</span>':''}</td>
-      <td>${e.ou!=null?(e.totalLean==='—'?'&mdash;':e.totalLean+' '+pct(m.pOver)):'&mdash;'}</td>
+      <td><b>${esc(pick)}</b> ${pc}%</td>
+      <td>${m.expAway} &ndash; ${m.expHome}</td>
+      <td>${m.total}</td>
       <td><span class="conf ${m.confLabel.toLowerCase()}">${m.confLabel}</span></td></tr>`;}).join('');
-  $('#content').innerHTML=`<div style="overflow-x:auto"><table class="tbl"><thead><tr>
-    <th>Time</th><th>Matchup</th><th>Model A/H</th><th>Market A/H</th><th>ML Edge</th><th>Proj Tot</th><th>Total Lean</th><th>Conf</th></tr></thead><tbody>${rows}</tbody></table></div>
-    <div class="disc" style="margin-top:12px">Edge = model win% &minus; market implied% (de-vigged when both moneylines are posted). A positive edge means the model rates that side higher than the betting market. First-principles estimate, not betting advice.</div>`;
+  $('#content').innerHTML=`<div class="disc" style="margin:0 0 12px">Betting market isn't posted for this date yet (sportsbook lines usually appear game-day). Showing your <b>model's projections</b> &mdash; edges vs the market appear here automatically once lines are up.</div>
+    <div style="overflow-x:auto"><table class="tbl"><thead><tr><th>Time</th><th>Matchup</th><th>Model A/H</th><th>Model pick</th><th>Proj score</th><th>Proj total</th><th>Conf</th></tr></thead><tbody>${rows}</tbody></table></div>`;
 }
 function renderInjuries(){
   const byTeam=state.data.injuries||{};
