@@ -1,0 +1,2 @@
+# MLB Dashboard uses only the Python standard library - no third-party packages.
+# This file exists so the host detects a Python app.

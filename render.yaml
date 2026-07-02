@@ -1,0 +1,15 @@
+# Render Blueprint - one-click deploy config.
+# In Render: New > Blueprint, connect this repo, then set BALLDONTLIE_API_KEY.
+services:
+  - type: web
+    name: mlb-dashboard
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: python mlb_app.py
+    autoDeploy: true
+    envVars:
+      - key: BALLDONTLIE_API_KEY
+        sync: false          # set this secret in the Render dashboard, not in git
+      - key: PYTHON_VERSION
+        value: "3.12.7"

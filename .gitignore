@@ -1,0 +1,12 @@
+# NEVER commit your API key
+bdl_config.json
+.env
+
+# Python
+__pycache__/
+*.pyc
+
+# generated artifacts (not needed to run the web app)
+*.csv
+bdl_pitchstats*.json
+*.output
