@@ -265,6 +265,66 @@ def team_recent(season, start, end):
     return cached(f"recent:{start}:{end}", 3600, produce)
 
 
+def _relief_ip_from_box(pk):
+    """Relief innings each team threw in one game: {team_id: relief_ip}."""
+    try:
+        bx = fetch_json(f"{API}/game/{pk}/boxscore")
+    except (HTTPError, URLError, ValueError):
+        return {}
+    out = {}
+    for side in ("away", "home"):
+        t = (bx.get("teams") or {}).get(side) or {}
+        tid = (t.get("team") or {}).get("id")
+        tot = _ip_to_num(((t.get("teamStats") or {}).get("pitching") or {}).get("inningsPitched"))
+        if tid is None or tot is None:
+            continue
+        order = t.get("pitchers") or []
+        s_ip = 0.0
+        if order:
+            starter = (t.get("players") or {}).get(f"ID{order[0]}") or {}
+            s_ip = _ip_to_num(((starter.get("stats") or {}).get("pitching") or {}).get("inningsPitched")) or 0.0
+        out[tid] = max(0.0, tot - s_ip)
+    return out
+
+
+def bullpen_fatigue(target_date):
+    """team_id -> {factor, ip}: recent relief workload vs league (last 2 days).
+    Tired pen (>league) -> factor >1 (allows more); rested -> <1. Bounded."""
+    def produce():
+        try:
+            td = datetime.strptime(target_date, "%Y-%m-%d")
+        except ValueError:
+            return None
+        pks = []
+        for back in (1, 2):
+            d = (td - timedelta(days=back)).strftime("%Y-%m-%d")
+            try:
+                dates = fetch_json(f"{API}/schedule?sportId=1&date={d}").get("dates") or []
+                for g in (dates[0].get("games", []) if dates else []):
+                    if (g.get("status") or {}).get("abstractGameState") == "Final":
+                        pks.append(g["gamePk"])
+            except (HTTPError, URLError, ValueError, KeyError, IndexError):
+                pass
+        pks = list(dict.fromkeys(pks))
+        if not pks:
+            return None
+        relief = {}
+        with ThreadPoolExecutor(max_workers=12) as ex:
+            for res in ex.map(_relief_ip_from_box, pks):
+                for tid, ip in res.items():
+                    relief[tid] = relief.get(tid, 0.0) + ip
+        if not relief:
+            return None
+        lg = sum(relief.values()) / len(relief)
+        out = {}
+        for tid, ip in relief.items():
+            ratio = (ip / lg) if lg else 1.0
+            out[tid] = {"factor": round(max(0.93, min(1.10, 1 + (ratio - 1) * 0.18)), 3),
+                        "ip": round(ip, 1)}
+        return out or None
+    return cached(f"bpfat:{target_date}", 14400, produce)
+
+
 # ---- MLB: league leaders --------------------------------------------------
 
 def leaders(season):
@@ -769,6 +829,7 @@ def _expected_runs(off, deff, lg_rpg, lg_era, park, wx, home):
     neut_d = 0.5 * (_f(deff.get("homePark")) or 1.0) + 0.5
     pen_era = _f(deff.get("relEra")) or _f(deff.get("teamEra")) or lg_era  # real bullpen ERA
     p_mult = ((pen_era / neut_d) / lg_era) if lg_era else 1.0
+    p_mult *= (_f(deff.get("bpFatigue")) or 1.0)   # recent bullpen fatigue
     def_m = max(0.65, min(1.45, 0.62 * s_mult + 0.38 * p_mult))
     lam = lg_rpg * off_m * def_m * park * wx * (1.04 if home else 0.965)
     return max(1.5, min(9.0, lam)), _ok
@@ -883,6 +944,10 @@ def run_model(gd, away, home, lg_rpg, lg_era):
         rp, sp = _f(s.get("recentRpg")), _f(s.get("rspg"))
         if rp is not None and sp and abs(rp - sp) >= 0.9:
             drivers.append(["Form", f'{s["team"].split()[-1]} {"hot" if rp > sp else "cold"}'])
+    for s in (away, home):
+        bf = _f(s.get("bpFatigue"))
+        if bf is not None and (bf >= 1.035 or bf <= 0.95):
+            drivers.append(["Pen", f'{s["team"].split()[-1]} {"tired" if bf > 1 else "rested"}'])
     conf = _confidence(away, home)
     return {
         "pAway": round(gm["pAway"], 3), "pHome": round(gm["pHome"], 3),
@@ -928,6 +993,7 @@ def build_slate(target_date):
             "splits": ex.submit(team_splits, season),
             "homepark": ex.submit(team_home_park, season),
             "recent": ex.submit(team_recent, season, recent_start, recent_end),
+            "bpfat": ex.submit(bullpen_fatigue, target_date),
         }
         det_f = {pid: ex.submit(pitcher_detail, pid, season) for pid in pids}
         wx_f = {g["gamePk"]: ex.submit(weather, g["gamePk"]) for g in raw}
@@ -947,6 +1013,7 @@ def build_slate(target_date):
         splits = fs["splits"].result() or {}
         homeparks = fs["homepark"].result() or {}
         recent = fs["recent"].result() or {}
+        bpfat = fs["bpfat"].result() or {}
         det = {pid: f.result() for pid, f in det_f.items()}
         wx = {pk: f.result() for pk, f in wx_f.items()}
         fc = {pk: f.result() for pk, f in fc_f.items()}
@@ -994,6 +1061,8 @@ def build_slate(target_date):
             "relEra": splits.get(tid, {}).get("relEra"),
             "homePark": homeparks.get(tid, 1.0),
             "recentRpg": recent.get(tid),
+            "bpFatigue": (bpfat.get(tid) or {}).get("factor"),
+            "bpIP": (bpfat.get(tid) or {}).get("ip"),
             "inj": team_injuries(inj_data, t.get("name", "")),
             "pitcher": pitcher,
         }
