@@ -1374,6 +1374,17 @@ PAGE = r"""<!DOCTYPE html>
   .injbadge.out{background:rgba(239,84,84,.15);color:#df5656}.injbadge.il{background:rgba(240,150,50,.16);color:#dd8f2c}.injbadge.day{background:rgba(91,155,245,.15);color:#4f8ae6}
   .drv{margin-top:6px;color:var(--muted);font-size:11px;line-height:1.55}
   .injret{color:#54e08a}
+  #shareModal{position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;z-index:50;padding:20px}
+  #shareModal.hidden{display:none}
+  .share-box{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:22px;max-width:340px;width:100%;text-align:center;position:relative;box-shadow:var(--shadow)}
+  .share-box h3{margin:0 0 14px;font-size:17px}
+  #shareQR{background:#fff;border-radius:10px;padding:8px;width:220px;height:220px;object-fit:contain}
+  .share-sub{color:var(--muted);font-size:12px;margin:8px 0 12px}
+  .share-url{font-size:12px;color:var(--muted);word-break:break-all;background:var(--chip);border:1px solid var(--line);border-radius:8px;padding:8px;margin-bottom:12px}
+  .share-actions{display:flex;gap:8px;justify-content:center;flex-wrap:wrap}
+  .share-actions a.btn{text-decoration:none;display:inline-flex;align-items:center}
+  .share-tip{margin-top:14px;color:var(--muted);font-size:11.5px;line-height:1.5}
+  .share-close{position:absolute;top:8px;right:12px;background:transparent;border:0;color:var(--muted);font-size:18px;cursor:pointer}
   @media(max-width:560px){.lead-wrap{grid-template-columns:1fr}}
 </style></head>
 <body>
@@ -1397,6 +1408,7 @@ PAGE = r"""<!DOCTYPE html>
     <div class="seg" id="view"><button data-view="cards" class="active">Cards</button><button data-view="table">Table</button></div>
     <label class="toggle"><input type="checkbox" id="auto"> Auto 60s</label>
     <button id="theme" title="Light / dark theme">&#127769;</button>
+    <button id="share" title="Get this on your phone">&#128241; Share</button>
   </div>
   <div class="meta">
     <span class="pill" id="dateLabel">&mdash;</span>
@@ -1410,6 +1422,20 @@ PAGE = r"""<!DOCTYPE html>
   <div class="disc">&#9888;&#65039; Model = first-principles run-expectancy estimate (no historical backtesting). For research/entertainment only &mdash; not betting advice.</div>
 </header>
 <main id="content"><div class="center"><div class="spinner"></div>Loading the slate&hellip;</div></main>
+<div id="shareModal" class="hidden">
+  <div class="share-box">
+    <button class="share-close" id="shareClose">&#10005;</button>
+    <h3>&#128241; Get this on your phone</h3>
+    <img id="shareQR" alt="QR code">
+    <div class="share-sub">Scan with your phone camera</div>
+    <div class="share-url" id="shareUrl"></div>
+    <div class="share-actions">
+      <a id="shareEmail" class="btn primary">&#9993;&#65039; Email the link</a>
+      <button id="shareCopy" class="btn">Copy link</button>
+    </div>
+    <div class="share-tip">On your phone, open the link then tap your browser menu &rarr; <b>Add to Home Screen</b> for an app icon.</div>
+  </div>
+</div>
 <script>
 const state={data:null,date:null,tab:'games',view:'cards',sortKey:'time',sortDir:1,auto:false,timer:null};
 const $=s=>document.querySelector(s);
@@ -1676,6 +1702,17 @@ function applyTheme(t){document.documentElement.setAttribute('data-theme',t);the
 let theme='dark';try{theme=localStorage.getItem('mlb_theme')||'dark';}catch(e){}
 applyTheme(theme);
 themeBtn.onclick=()=>{theme=theme==='light'?'dark':'light';try{localStorage.setItem('mlb_theme',theme)}catch(e){}applyTheme(theme);};
+const shareUrl=()=>location.href.split('#')[0];
+$('#share').onclick=()=>{
+  const u=shareUrl();
+  $('#shareUrl').textContent=u;
+  $('#shareQR').src='https://api.qrserver.com/v1/create-qr-code/?size=440x440&margin=12&data='+encodeURIComponent(u);
+  $('#shareEmail').href='mailto:?subject='+encodeURIComponent('My MLB Dashboard')+'&body='+encodeURIComponent('My MLB model dashboard:\n\n'+u);
+  $('#shareModal').classList.remove('hidden');
+};
+$('#shareClose').onclick=()=>$('#shareModal').classList.add('hidden');
+$('#shareModal').onclick=e=>{ if(e.target.id==='shareModal') $('#shareModal').classList.add('hidden'); };
+$('#shareCopy').onclick=async()=>{ try{ await navigator.clipboard.writeText(shareUrl()); const b=$('#shareCopy'); b.textContent='Copied!'; setTimeout(()=>{b.textContent='Copy link';},1500);}catch(e){} };
 applyAuto();load(null);
 </script>
 </body></html>
