@@ -967,11 +967,15 @@ def market_edge(model, odds, away_team, home_team):
         else:
             out.update(side="away", pick=away_team, edge=round(e_a, 3))
     ou = _f(odds.get("ou"))
-    if ou is not None and model.get("pOver") is not None:
+    if ou is not None:
         out["ou"] = ou
-        out["pOver"] = round(model["pOver"], 3)
-        out["totalLean"] = ("Over" if model["pOver"] > 0.52
-                            else "Under" if model["pOver"] < 0.48 else "—")
+        if model.get("pOver") is not None:
+            out["pOver"] = round(model["pOver"], 3)
+        mt = _f(model.get("total"))
+        if mt is not None:
+            diff = mt - ou   # projected total vs the line (push-proof)
+            out["totalDiff"] = round(diff, 1)
+            out["totalLean"] = "Over" if diff >= 0.4 else "Under" if diff <= -0.4 else "—"
     return out or None
 
 
