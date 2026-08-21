@@ -1702,7 +1702,8 @@ function applyTheme(t){document.documentElement.setAttribute('data-theme',t);the
 let theme='dark';try{theme=localStorage.getItem('mlb_theme')||'dark';}catch(e){}
 applyTheme(theme);
 themeBtn.onclick=()=>{theme=theme==='light'?'dark':'light';try{localStorage.setItem('mlb_theme',theme)}catch(e){}applyTheme(theme);};
-const shareUrl=()=>location.href.split('#')[0];
+const PUBLIC_URL='https://mlb-dashboard-uqu2.onrender.com';
+const shareUrl=()=>{const h=location.hostname;return (!h||h==='localhost'||h==='127.0.0.1')?PUBLIC_URL:location.href.split('#')[0];};
 $('#share').onclick=()=>{
   const u=shareUrl();
   $('#shareUrl').textContent=u;
