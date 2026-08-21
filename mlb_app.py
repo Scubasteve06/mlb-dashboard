@@ -325,6 +325,24 @@ def bullpen_fatigue(target_date):
     return cached(f"bpfat:{target_date}", 14400, produce)
 
 
+def team_defense(season):
+    """team_id -> Outs Above Average (team fielding). Positive = saves runs."""
+    def produce():
+        url = f"{SAVANT}/outs_above_average?type=Fielding_Team&year={season}&min=q&csv=true"
+        try:
+            rows = csv_rows(fetch_text(url))
+        except (HTTPError, URLError):
+            return None
+        out = {}
+        for r in rows:
+            try:
+                out[int(r.get("team_id"))] = float(r.get("outs_above_average"))
+            except (TypeError, ValueError):
+                continue
+        return out or None
+    return cached(f"defense:{season}", 21600, produce)
+
+
 # ---- MLB: league leaders --------------------------------------------------
 
 def leaders(season):
@@ -497,6 +515,70 @@ def espn_odds(date_str):
             out[k] = entry
         return out
     return cached(f"espn:{date_str}", 300, produce)
+
+
+# ---- The Odds API (replaces ESPN, which now blocks server requests) --------
+ODDS_API = "https://api.the-odds-api.com/v4/sports/baseball_mlb/odds"
+
+
+def odds_api_key():
+    if os.environ.get("THE_ODDS_API_KEY"):
+        return os.environ["THE_ODDS_API_KEY"]
+    if os.path.exists(BDL_CONFIG):
+        try:
+            with open(BDL_CONFIG, encoding="utf-8") as f:
+                return json.load(f).get("odds_api_key")
+        except (OSError, ValueError):
+            pass
+    return None
+
+
+def odds_api(_date=None):
+    """Market odds (moneyline + total) via The Odds API. One call covers all
+    upcoming games; keyed by matchup in the same shape the model already uses."""
+    def produce():
+        key = odds_api_key()
+        if not key:
+            return None
+        url = (f"{ODDS_API}?apiKey={key}&regions=us&markets=h2h,totals"
+               f"&oddsFormat=american&dateFormat=iso")
+        try:
+            games = fetch_json(url)
+        except (HTTPError, URLError, ValueError):
+            return None
+        out = {}
+        for g in games or []:
+            home, away = g.get("home_team"), g.get("away_team")
+            books = g.get("bookmakers") or []
+            if not (home and away and books):
+                continue
+            bk = books[0]
+            aml = hml = ou = None
+            for m in bk.get("markets", []):
+                if m.get("key") == "h2h":
+                    for o in m.get("outcomes", []):
+                        if o.get("name") == home:
+                            hml = o.get("price")
+                        elif o.get("name") == away:
+                            aml = o.get("price")
+                elif m.get("key") == "totals":
+                    outs = m.get("outcomes", [])
+                    if outs:
+                        ou = outs[0].get("point")
+            imp_a, imp_h, details = None, None, None
+            pa, ph = _ml_to_prob(aml), _ml_to_prob(hml)
+            if pa and ph:
+                s = pa + ph
+                imp_a, imp_h = pa / s, ph / s
+                if aml is not None and hml is not None:
+                    fav_ml, fav = (hml, home) if hml < aml else (aml, away)
+                    details = f"{fav.split()[-1]} {int(fav_ml):+d}"
+            out[norm(away) + "@" + norm(home)] = {
+                "details": details, "ou": ou, "spread": None,
+                "book": bk.get("title"), "tv": None,
+                "impAway": imp_a, "impHome": imp_h}
+        return out or None
+    return cached("oddsapi", 21600, produce)  # 6h; free tier is plenty at this rate
 
 
 # ---- MLB: pitcher hand (bulk) + per-pitcher detail ------------------------
@@ -831,6 +913,9 @@ def _expected_runs(off, deff, lg_rpg, lg_era, park, wx, home):
     p_mult = ((pen_era / neut_d) / lg_era) if lg_era else 1.0
     p_mult *= (_f(deff.get("bpFatigue")) or 1.0)   # recent bullpen fatigue
     def_m = max(0.65, min(1.45, 0.62 * s_mult + 0.38 * p_mult))
+    oaa = _f(deff.get("defOAA"))
+    if oaa is not None:
+        def_m *= max(0.97, min(1.03, 1 - oaa * 0.0009))   # team defense (OAA)
     lam = lg_rpg * off_m * def_m * park * wx * (1.04 if home else 0.965)
     return max(1.5, min(9.0, lam)), _ok
 
@@ -948,6 +1033,10 @@ def run_model(gd, away, home, lg_rpg, lg_era):
         bf = _f(s.get("bpFatigue"))
         if bf is not None and (bf >= 1.035 or bf <= 0.95):
             drivers.append(["Pen", f'{s["team"].split()[-1]} {"tired" if bf > 1 else "rested"}'])
+    for s in (away, home):
+        oaa = _f(s.get("defOAA"))
+        if oaa is not None and abs(oaa) >= 8:
+            drivers.append(["Defense", f'{s["team"].split()[-1]} {"glove+" if oaa > 0 else "glove-"}'])
     conf = _confidence(away, home)
     return {
         "pAway": round(gm["pAway"], 3), "pHome": round(gm["pHome"], 3),
@@ -987,8 +1076,9 @@ def build_slate(target_date):
             "lead": ex.submit(leaders, season),
             "xs": ex.submit(savant_xstats, season),
             "ar": ex.submit(savant_arsenal, season),
-            "odds": ex.submit(espn_odds, target_date),
+            "odds": ex.submit(odds_api, target_date),
             "hands": ex.submit(pitcher_hands, sorted(pids), season),
+            "defense": ex.submit(team_defense, season),
             "inj": ex.submit(injuries),
             "splits": ex.submit(team_splits, season),
             "homepark": ex.submit(team_home_park, season),
@@ -1009,6 +1099,7 @@ def build_slate(target_date):
         ar = fs["ar"].result() or {}
         odds = fs["odds"].result() or {}
         hands = fs["hands"].result() or {}
+        defense = fs["defense"].result() or {}
         inj_data = fs["inj"].result()
         splits = fs["splits"].result() or {}
         homeparks = fs["homepark"].result() or {}
@@ -1063,6 +1154,7 @@ def build_slate(target_date):
             "recentRpg": recent.get(tid),
             "bpFatigue": (bpfat.get(tid) or {}).get("factor"),
             "bpIP": (bpfat.get(tid) or {}).get("ip"),
+            "defOAA": defense.get(tid),
             "inj": team_injuries(inj_data, t.get("name", "")),
             "pitcher": pitcher,
         }
