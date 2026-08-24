@@ -1225,6 +1225,15 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(502, json.dumps({"error": f"MLB API unreachable: {e}"}).encode(), "application/json")
             except Exception as e:  # noqa: BLE001
                 self._send(500, json.dumps({"error": str(e)}).encode(), "application/json")
+        elif p.path == "/api/diag":
+            info = {
+                "odds_env_set": "THE_ODDS_API_KEY" in os.environ,
+                "odds_key_present": bool(odds_api_key()),
+                "odds_key_len": len(odds_api_key() or ""),
+                "odds_count": len(odds_api() or {}),
+                "bdl_key_present": bool(bdl_key()),
+            }
+            self._send(200, json.dumps(info).encode("utf-8"), "application/json")
         elif p.path == "/favicon.ico":
             self._send(204, b"", "image/x-icon")
         else:
